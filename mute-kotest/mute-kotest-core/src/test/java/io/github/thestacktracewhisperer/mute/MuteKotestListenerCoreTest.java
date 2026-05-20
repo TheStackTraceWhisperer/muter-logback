@@ -214,6 +214,80 @@ class MuteKotestListenerCoreTest {
     assertTrue(firstRestored.get(), "First mute's restorer should be called when second mute fails");
   }
 
+  @Test
+  @DisplayName("Rollback: if a restorer throws during cleanup, the exception is suppressed and remaining restorers still run")
+  void rollbackSuppressesRestoreExceptionsAndContinues() {
+    RuntimeException primary = new RuntimeException("mute-phase-failure");
+    RuntimeException restoreFailure = new RuntimeException("restore-failure");
+    AtomicBoolean firstRestored = new AtomicBoolean();
+
+    // mute1 succeeds → restorer records firstRestored
+    LogMute mute1 = classes -> () -> firstRestored.set(true);
+    // mute2 succeeds → restorer throws
+    LogMute mute2 = classes -> () -> {
+      throw restoreFailure;
+    };
+    // mute3 throws during mute() → triggers rollback of mute2 and mute1
+    LogMute failingMute = classes -> {
+      throw primary;
+    };
+
+    MuteKotestListener listener = new MuteKotestListener(List.of(mute1, mute2, failingMute));
+    Object key = new Object();
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> listener.muteBefore(key, MutedSpec.class));
+
+    assertSame(primary, thrown, "primary exception must propagate unchanged");
+    assertTrue(firstRestored.get(), "mute1's restorer must still run even though mute2's restorer threw");
+    assertArrayEquals(new Throwable[]{restoreFailure}, thrown.getSuppressed(),
+      "the restorer's exception must be attached as a suppressed exception to the primary");
+  }
+
+  @Test
+  @DisplayName("End-of-test restore: if one restorer throws, the exception is collected and remaining restorers still run")
+  void compositeRestorerContinuesDespiteRestoreException() {
+    RuntimeException restoreFailure = new RuntimeException("restore-failure");
+    AtomicBoolean secondRestored = new AtomicBoolean();
+
+    // Restorers run in reverse order: mute2 first (sets secondRestored), then mute1 (throws).
+    LogMute mute1 = classes -> () -> {
+      throw restoreFailure;
+    };
+    LogMute mute2 = classes -> () -> secondRestored.set(true);
+
+    MuteKotestListener listener = new MuteKotestListener(List.of(mute1, mute2));
+    Object key = new Object();
+
+    listener.muteBefore(key, MutedSpec.class);
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> listener.restoreAfter(key));
+
+    assertSame(restoreFailure, thrown, "restorer exception must propagate out of restoreAfter");
+    assertTrue(secondRestored.get(), "mute2's restorer must run even though mute1's restorer threw");
+  }
+
+  @Test
+  @DisplayName("restoreAfter removes the map entry before calling restore(), so a throwing restore does not leave stale state")
+  void restoreAfterCleansUpMapEntryBeforeRestoring() {
+    RuntimeException restoreFailure = new RuntimeException("restore-failure");
+    MuteKotestListener listener = new MuteKotestListener(
+      List.of(classes -> () -> {
+        throw restoreFailure;
+      }));
+    Object key = new Object();
+
+    listener.muteBefore(key, MutedSpec.class);
+
+    // First call: restore() throws, but the entry must already be gone from the map
+    assertThrows(RuntimeException.class, () -> listener.restoreAfter(key));
+
+    // Second call with the same key must be a no-op (entry was removed before restore ran)
+    assertDoesNotThrow(() -> listener.restoreAfter(key),
+      "map entry must have been removed before restore() was called; second call must be a no-op");
+  }
+
   // ---------- Fixture classes ----------
 
   static class UnmutedSpec {

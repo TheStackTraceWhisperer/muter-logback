@@ -64,7 +64,7 @@ public class MuteListener implements IInvokedMethodListener {
 
   @Override
   public void beforeInvocation(IInvokedMethod method, ITestResult testResult) {
-    if (!method.isTestMethod()) {
+    if (!method.isTestMethod() && !method.isConfigurationMethod()) {
       return;
     }
     findMuteAnnotation(method).ifPresent(annotation -> {
@@ -81,21 +81,32 @@ public class MuteListener implements IInvokedMethodListener {
         }
       } catch (RuntimeException | Error e) {
         for (int i = restorers.size() - 1; i >= 0; i--) {
-          restorers.get(i).restore();
+          try {
+            restorers.get(i).restore();
+          } catch (Exception ex) {
+            e.addSuppressed(ex);
+          }
         }
         throw e;
       }
       restorerHolder.set(() -> {
+        RuntimeException primaryEx = null;
         for (int i = restorers.size() - 1; i >= 0; i--) {
-          restorers.get(i).restore();
+          try {
+            restorers.get(i).restore();
+          } catch (RuntimeException ex) {
+            if (primaryEx == null) primaryEx = ex;
+            else primaryEx.addSuppressed(ex);
+          }
         }
+        if (primaryEx != null) throw primaryEx;
       });
     });
   }
 
   @Override
   public void afterInvocation(IInvokedMethod method, ITestResult testResult) {
-    if (!method.isTestMethod()) {
+    if (!method.isTestMethod() && !method.isConfigurationMethod()) {
       return;
     }
     LogRestorer restorer = restorerHolder.get();

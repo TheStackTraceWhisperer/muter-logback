@@ -44,8 +44,8 @@ class MuteListenerCoreTest {
   // ---------- MuteListener orchestration tests ----------
 
   @Test
-  @DisplayName("Non-test invocation (e.g. @BeforeMethod): LogMute.mute() is never called")
-  void nonTestInvocationIsIgnored() {
+  @DisplayName("Unrecognised invocation type (not a test, not a configuration method): LogMute.mute() is never called")
+  void nonTestNonConfigurationInvocationIsIgnored() {
     AtomicBoolean muteCalled = new AtomicBoolean();
     LogMute mockMute = classes -> {
       muteCalled.set(true);
@@ -54,12 +54,111 @@ class MuteListenerCoreTest {
     };
     MuteListener listener = new MuteListener(List.of(mockMute));
 
-    IInvokedMethod invocation = invokedMethod(false, NoMuteFixture.class, "run");
+    // isTestMethod=false, isConfigurationMethod=false — both gates closed → skip entirely
+    IInvokedMethod invocation = invokedMethod(false, false, NoMuteFixture.class, "run");
     ITestResult result = testResult();
 
     listener.beforeInvocation(invocation, result);
     listener.afterInvocation(invocation, result);
-    assertEquals(false, muteCalled.get());
+    assertFalse(muteCalled.get(), "Neither a test nor a configuration method — must be ignored");
+  }
+
+  @Test
+  @DisplayName("Configuration method with class-level @Mute: LogMute.mute() is called before setup and restored after")
+  void configurationMethodWithClassLevelMuteIsMuted() {
+    AtomicBoolean muteCalled = new AtomicBoolean();
+    AtomicBoolean restored = new AtomicBoolean();
+    LogMute mockMute = classes -> {
+      muteCalled.set(true);
+      return () -> restored.set(true);
+    };
+    MuteListener listener = new MuteListener(List.of(mockMute));
+
+    // isTestMethod=false, isConfigurationMethod=true — e.g. @BeforeClass / @BeforeMethod
+    IInvokedMethod invocation = invokedMethod(false, true, ClassLevelMuteFixture.class, "run");
+    ITestResult result = testResult();
+
+    listener.beforeInvocation(invocation, result);
+    assertTrue(muteCalled.get(), "@BeforeClass/@BeforeMethod setups should be muted when the class carries @Mute");
+
+    listener.afterInvocation(invocation, result);
+    assertTrue(restored.get(), "restore() must be called after configuration method completes");
+  }
+
+  @Test
+  @DisplayName("Configuration method whose class lacks @Mute: LogMute.mute() is never called")
+  void configurationMethodWithoutMuteIsIgnored() {
+    AtomicBoolean muteCalled = new AtomicBoolean();
+    LogMute mockMute = classes -> {
+      muteCalled.set(true);
+      return () -> {
+      };
+    };
+    MuteListener listener = new MuteListener(List.of(mockMute));
+
+    // isTestMethod=false, isConfigurationMethod=true — but no @Mute on the class
+    IInvokedMethod invocation = invokedMethod(false, true, NoMuteFixture.class, "run");
+    ITestResult result = testResult();
+
+    listener.beforeInvocation(invocation, result);
+    listener.afterInvocation(invocation, result);
+    assertFalse(muteCalled.get(), "Configuration methods on un-annotated classes must not be muted");
+  }
+
+  @Test
+  @DisplayName("Rollback: if a restorer throws during cleanup, the exception is suppressed and remaining restorers still run")
+  void rollbackSuppressesRestoreExceptionsAndContinues() {
+    RuntimeException primary = new RuntimeException("mute-phase-failure");
+    RuntimeException restoreFailure = new RuntimeException("restore-failure");
+    AtomicBoolean firstRestored = new AtomicBoolean();
+
+    // mute1 succeeds → restorer records firstRestored
+    LogMute mute1 = classes -> () -> firstRestored.set(true);
+    // mute2 succeeds → restorer throws
+    LogMute mute2 = classes -> () -> {
+      throw restoreFailure;
+    };
+    // mute3 throws during mute() → triggers rollback of mute2 and mute1
+    LogMute failingMute = classes -> {
+      throw primary;
+    };
+
+    MuteListener listener = new MuteListener(List.of(mute1, mute2, failingMute));
+    IInvokedMethod invocation = invokedMethod(true, MethodMuteFixture.class, "run");
+    ITestResult result = testResult();
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> listener.beforeInvocation(invocation, result));
+
+    assertSame(primary, thrown, "primary exception must propagate unchanged");
+    assertTrue(firstRestored.get(), "mute1's restorer must still run even though mute2's restorer threw");
+    assertArrayEquals(new Throwable[]{restoreFailure}, thrown.getSuppressed(),
+      "the restorer's exception must be attached as a suppressed exception to the primary");
+  }
+
+  @Test
+  @DisplayName("End-of-test restore: if one restorer throws, the exception is collected and remaining restorers still run")
+  void compositeRestorerContinuesDespiteRestoreException() {
+    RuntimeException restoreFailure = new RuntimeException("restore-failure");
+    AtomicBoolean secondRestored = new AtomicBoolean();
+
+    // Restorers run in reverse order: mute2 first (sets secondRestored), then mute1 (throws).
+    LogMute mute1 = classes -> () -> {
+      throw restoreFailure;
+    };
+    LogMute mute2 = classes -> () -> secondRestored.set(true);
+
+    MuteListener listener = new MuteListener(List.of(mute1, mute2));
+    IInvokedMethod invocation = invokedMethod(true, MethodMuteFixture.class, "run");
+    ITestResult result = testResult();
+
+    listener.beforeInvocation(invocation, result);
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> listener.afterInvocation(invocation, result));
+
+    assertSame(restoreFailure, thrown, "restorer exception must propagate out of afterInvocation");
+    assertTrue(secondRestored.get(), "mute2's restorer must run even though mute1's restorer threw");
   }
 
   @Test
@@ -225,6 +324,13 @@ class MuteListenerCoreTest {
   private static IInvokedMethod invokedMethod(boolean isTestMethod,
                                               Class<?> testClass,
                                               String methodName) {
+    return invokedMethod(isTestMethod, false, testClass, methodName);
+  }
+
+  private static IInvokedMethod invokedMethod(boolean isTestMethod,
+                                              boolean isConfigurationMethod,
+                                              Class<?> testClass,
+                                              String methodName) {
     Method method;
     try {
       method = testClass.getDeclaredMethod(methodName);
@@ -250,6 +356,7 @@ class MuteListenerCoreTest {
       new Class<?>[]{IInvokedMethod.class},
       (proxy, m, args) -> switch (m.getName()) {
         case "isTestMethod" -> isTestMethod;
+        case "isConfigurationMethod" -> isConfigurationMethod;
         case "getTestMethod" -> testNGMethod;
         case "toString" -> "IInvokedMethodProxy";
         case "hashCode" -> System.identityHashCode(proxy);

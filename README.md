@@ -126,6 +126,18 @@ class PaymentServiceIsolatedSpec : FunSpec({
 })
 ```
 
+> **Kotest scope limitation:** `@Mute` is supported **at the Spec (class) level only**.
+> Because Kotest DSL styles (`FunSpec`, `StringSpec`, `FreeSpec`, etc.) define tests as
+> lambdas, there is no method element to annotate at the individual-test level.
+>
+> This restriction also applies to `AnnotationSpec`. If you place `@Mute` on an
+> `@Test`-annotated function inside an `AnnotationSpec`, the annotation will be silently
+> ignored — only a class-level `@Mute` on the `AnnotationSpec` class is honoured.
+>
+> To mute only a subset of tests within a spec, either split them into separate spec
+> classes (each with its own `@Mute`) or scope the annotation at the class level and
+> accept that all tests in that spec are muted.
+
 ## Dependency
 
 Pick **one** module that matches your test framework and logging framework:

@@ -116,14 +116,25 @@ public class MuteKotestListener implements BeforeEachListener, AfterEachListener
       }
     } catch (RuntimeException | Error e) {
       for (int i = restorers.size() - 1; i >= 0; i--) {
-        restorers.get(i).restore();
+        try {
+          restorers.get(i).restore();
+        } catch (Exception ex) {
+          e.addSuppressed(ex);
+        }
       }
       throw e;
     }
     LogRestorer restorer = () -> {
+      RuntimeException primaryEx = null;
       for (int i = restorers.size() - 1; i >= 0; i--) {
-        restorers.get(i).restore();
+        try {
+          restorers.get(i).restore();
+        } catch (RuntimeException ex) {
+          if (primaryEx == null) primaryEx = ex;
+          else primaryEx.addSuppressed(ex);
+        }
       }
+      if (primaryEx != null) throw primaryEx;
     };
     restorerHolder.compute(executionKey, (key, previous) -> {
       if (previous != null) {
@@ -145,10 +156,9 @@ public class MuteKotestListener implements BeforeEachListener, AfterEachListener
   }
 
   void restoreAfter(Object executionKey) {
-    LogRestorer restorer = restorerHolder.get(executionKey);
+    LogRestorer restorer = restorerHolder.remove(executionKey);
     if (restorer != null) {
       restorer.restore();
-      restorerHolder.remove(executionKey, restorer);
     }
   }
 }

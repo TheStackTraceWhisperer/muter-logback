@@ -48,7 +48,7 @@ import java.util.List;
 public class MuteSpockExtension implements IGlobalExtension {
 
   /**
-   * Public no-arg constructor required by the {@link ServiceLoader} mechanism.
+   * Public no-arg constructor required by the {@link java.util.ServiceLoader} mechanism.
    */
   public MuteSpockExtension() {
   }
