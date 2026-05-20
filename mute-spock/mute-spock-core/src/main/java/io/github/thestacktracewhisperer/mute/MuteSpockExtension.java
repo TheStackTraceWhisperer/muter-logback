@@ -24,10 +24,7 @@ import org.spockframework.runtime.extension.IGlobalExtension;
 import org.spockframework.runtime.model.FeatureInfo;
 import org.spockframework.runtime.model.SpecInfo;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.ServiceLoader;
 
 /**
  * Spock 2 global extension registered via
@@ -58,7 +55,7 @@ public class MuteSpockExtension implements IGlobalExtension {
 
   @Override
   public void visitSpec(SpecInfo spec) {
-    List<LogMute> logMutes = loadLogMutes();
+    List<LogMute> logMutes = LogMuteRegistry.getProviders();
     Mute specAnnotation = spec.getReflection().getAnnotation(Mute.class);
 
     for (FeatureInfo feature : spec.getFeatures()) {
@@ -74,11 +71,5 @@ public class MuteSpockExtension implements IGlobalExtension {
           new MuteInterceptor(specAnnotation.classes(), logMutes));
       }
     }
-  }
-
-  private static List<LogMute> loadLogMutes() {
-    List<LogMute> discovered = new ArrayList<>();
-    ServiceLoader.load(LogMute.class).forEach(discovered::add);
-    return Collections.unmodifiableList(discovered);
   }
 }

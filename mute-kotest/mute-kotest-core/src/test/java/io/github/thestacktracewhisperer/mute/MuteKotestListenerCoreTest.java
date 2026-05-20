@@ -21,8 +21,19 @@ package io.github.thestacktracewhisperer.mute;
  */
 
 import io.kotest.core.annotation.AutoScan;
+import io.kotest.core.descriptors.Descriptor;
+import io.kotest.core.descriptors.DescriptorId;
+import io.kotest.core.extensions.Extension;
+import io.kotest.core.factory.FactoryId;
+import io.kotest.core.names.TestName;
+import io.kotest.core.spec.RootTest;
+import io.kotest.core.spec.Spec;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import kotlin.Unit;
+import kotlin.coroutines.Continuation;
+import kotlin.jvm.JvmClassMappingKt;
+import kotlin.jvm.functions.Function2;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -158,6 +169,37 @@ class MuteKotestListenerCoreTest {
   }
 
   @Test
+  @DisplayName("Kotest callbacks resolve restorer state by descriptor ID")
+  void callbacksResolveStateByDescriptorId() {
+    AtomicBoolean restored = new AtomicBoolean();
+    MuteKotestListener listener = new MuteKotestListener(List.of(classes -> () -> restored.set(true)));
+    MutedKotestSpec spec = new MutedKotestSpec();
+
+    listener.beforeEach(testCase("descriptor-id", "duplicate test name", spec, "factory-before"), null);
+    listener.afterEach(testCase("descriptor-id", "another object same execution", spec, "factory-after"), null, null);
+
+    assertTrue(restored.get(), "restore() should be found by descriptor ID across callback instances");
+  }
+
+  @Test
+  @DisplayName("Duplicate Kotest test names do not collide when descriptor IDs differ")
+  void duplicateTestNamesDoNotCollide() {
+    AtomicInteger restoreCount = new AtomicInteger();
+    MuteKotestListener listener = new MuteKotestListener(List.of(classes -> restoreCount::incrementAndGet));
+    MutedKotestSpec spec = new MutedKotestSpec();
+
+    listener.beforeEach(testCase("descriptor-id-1", "duplicate test name", spec, "factory-one"), null);
+    listener.beforeEach(testCase("descriptor-id-2", "duplicate test name", spec, "factory-two"), null);
+
+    assertEquals(0, restoreCount.get(), "distinct descriptor IDs should not overwrite each other");
+
+    listener.afterEach(testCase("descriptor-id-1", "duplicate test name", spec, "factory-three"), null, null);
+    listener.afterEach(testCase("descriptor-id-2", "duplicate test name", spec, "factory-four"), null, null);
+
+    assertEquals(2, restoreCount.get(), "each descriptor ID should restore independently");
+  }
+
+  @Test
   @DisplayName("Mute failure rolls back already-applied mutes and rethrows")
   void muteFailureRollsBackPreviousMutes() {
     AtomicBoolean firstRestored = new AtomicBoolean();
@@ -179,6 +221,19 @@ class MuteKotestListenerCoreTest {
 
   @Mute
   static class MutedSpec {
+  }
+
+  @Mute
+  static class MutedKotestSpec extends Spec {
+    @Override
+    public List<RootTest> rootTests() {
+      return List.of();
+    }
+
+    @Override
+    public List<Extension> globalExtensions() {
+      return List.of();
+    }
   }
 
   // ---------- Additional coverage tests ----------
@@ -239,5 +294,28 @@ class MuteKotestListenerCoreTest {
     listener.muteBefore(sameKey, MutedSpec.class); // should restore previous restorer
 
     assertTrue(firstRestored.get(), "previous restorer should be invoked on second muteBefore with same key");
+  }
+
+  private static io.kotest.core.test.TestCase testCase(String descriptorId,
+                                                       String testName,
+                                                       Spec spec,
+                                                       String factoryId) {
+    Descriptor.SpecDescriptor specDescriptor = new Descriptor.SpecDescriptor(
+      new DescriptorId(spec.getClass().getName()),
+      JvmClassMappingKt.getKotlinClass(spec.getClass()));
+    Descriptor.TestDescriptor testDescriptor = new Descriptor.TestDescriptor(
+      specDescriptor,
+      new DescriptorId(descriptorId));
+
+    return new io.kotest.core.test.TestCase(
+      testDescriptor,
+      TestName.Companion.invoke(testName),
+      spec,
+      (Function2<io.kotest.core.test.TestScope, Continuation<? super Unit>, Object>) (scope, continuation) -> Unit.INSTANCE,
+      io.kotest.core.source.SourceRef.None.INSTANCE,
+      io.kotest.core.test.TestType.Test,
+      io.kotest.core.test.config.ResolvedTestConfig.Companion.getDefault(),
+      new FactoryId(factoryId),
+      null);
   }
 }

@@ -38,8 +38,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>This listener is auto-registered globally via {@code @AutoScan}. When a Kotest spec is
  * not annotated with {@link Mute}, this listener is a no-op for that spec.
  *
- * <p>Delegates the actual logger manipulation to all {@link LogMute} implementations found
- * via {@link ServiceLoader}.
+ * <p>Delegates the actual logger manipulation to all cached {@link LogMute} implementations
+ * discovered on the classpath by {@link LogMuteRegistry}.
  *
  * <p>At least one {@code LogMute} implementation must be present on the test classpath
  * (e.g., mute-kotest-logback, mute-kotest-log4j, or mute-kotest-jul); otherwise an
@@ -57,12 +57,10 @@ public class MuteKotestListener implements BeforeEachListener, AfterEachListener
   }
 
   /**
-   * Production constructor: discovers {@link LogMute} implementations via {@link ServiceLoader}.
+   * Production constructor: uses the cached {@link LogMute} providers from {@link LogMuteRegistry}.
    */
   public MuteKotestListener() {
-    List<LogMute> discovered = new ArrayList<>();
-    ServiceLoader.load(LogMute.class).forEach(discovered::add);
-    this.logMutes = Collections.unmodifiableList(discovered);
+    this.logMutes = LogMuteRegistry.getProviders();
   }
 
   /**
@@ -75,14 +73,18 @@ public class MuteKotestListener implements BeforeEachListener, AfterEachListener
 
   @Override
   public Object beforeEach(TestCase testCase, Continuation<? super Unit> $completion) {
-    muteBefore(testCase, testCase.getSpec().getClass());
+    muteBefore(executionKey(testCase), testCase.getSpec().getClass());
     return Unit.INSTANCE;
   }
 
   @Override
   public Object afterEach(TestCase testCase, TestResult result, Continuation<? super Unit> $completion) {
-    restoreAfter(testCase);
+    restoreAfter(executionKey(testCase));
     return Unit.INSTANCE;
+  }
+
+  private static String executionKey(TestCase testCase) {
+    return testCase.getDescriptor().getId().getValue();
   }
 
   /**

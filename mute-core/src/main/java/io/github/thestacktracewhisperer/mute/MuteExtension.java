@@ -28,8 +28,8 @@ import java.util.*;
 
 /**
  * JUnit 5 extension registered by {@link Mute}. Delegates the actual logger
- * manipulation to all {@link LogMute} implementations found on the classpath
- * via {@link ServiceLoader}.
+ * manipulation to all cached {@link LogMute} implementations discovered on the
+ * classpath by {@link LogMuteRegistry}.
  *
  * <p>{@link Mute} may be placed on a test method <em>or</em> on a test class.
  * When placed on a class the annotation is inherited by every test method in
@@ -46,12 +46,10 @@ public class MuteExtension implements BeforeTestExecutionCallback, AfterTestExec
   private final List<LogMute> logMutes;
 
   /**
-   * Production constructor: discovers {@link LogMute} implementations via {@link ServiceLoader}.
+   * Production constructor: uses the cached {@link LogMute} providers from {@link LogMuteRegistry}.
    */
   public MuteExtension() {
-    List<LogMute> discovered = new ArrayList<>();
-    ServiceLoader.load(LogMute.class).forEach(discovered::add);
-    this.logMutes = Collections.unmodifiableList(discovered);
+    this.logMutes = LogMuteRegistry.getProviders();
   }
 
   /**
@@ -106,4 +104,3 @@ public class MuteExtension implements BeforeTestExecutionCallback, AfterTestExec
       .or(() -> Optional.ofNullable(context.getRequiredTestClass().getAnnotation(Mute.class)));
   }
 }
-

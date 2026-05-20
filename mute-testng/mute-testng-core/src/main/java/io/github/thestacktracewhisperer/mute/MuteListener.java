@@ -31,8 +31,8 @@ import java.util.*;
  * TestNG listener registered via {@code META-INF/services/org.testng.ITestNGListener}.
  *
  * <p>Detects {@link Mute} annotations on test methods or their declaring class and delegates
- * the actual logger manipulation to all {@link LogMute} implementations found on the
- * classpath via {@link ServiceLoader}.
+ * the actual logger manipulation to all cached {@link LogMute} implementations discovered on
+ * the classpath by {@link LogMuteRegistry}.
  *
  * <p>State is stored per-thread using a {@link ThreadLocal}, ensuring correctness for
  * single-threaded and parallel test runs alike.
@@ -48,12 +48,10 @@ public class MuteListener implements IInvokedMethodListener {
   private final ThreadLocal<LogRestorer> restorerHolder = new ThreadLocal<>();
 
   /**
-   * Production constructor: discovers {@link LogMute} implementations via {@link ServiceLoader}.
+   * Production constructor: uses the cached {@link LogMute} providers from {@link LogMuteRegistry}.
    */
   public MuteListener() {
-    List<LogMute> discovered = new ArrayList<>();
-    ServiceLoader.load(LogMute.class).forEach(discovered::add);
-    this.logMutes = Collections.unmodifiableList(discovered);
+    this.logMutes = LogMuteRegistry.getProviders();
   }
 
   /**
