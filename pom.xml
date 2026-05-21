@@ -62,6 +62,7 @@
     <logback.version>1.5.6</logback.version>
     <log4j.version>2.26.0</log4j.version>
     <jacoco.version>0.8.12</jacoco.version>
+    <jacoco.coverage.minimum>0.98</jacoco.coverage.minimum>
     <pitest.version>1.17.2</pitest.version>
     <pitest.junit5.plugin.version>1.2.1</pitest.junit5.plugin.version>
     <spock.version>2.4-groovy-4.0</spock.version>

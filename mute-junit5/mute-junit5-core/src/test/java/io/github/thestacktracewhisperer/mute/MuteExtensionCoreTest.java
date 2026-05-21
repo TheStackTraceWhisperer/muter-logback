@@ -189,6 +189,74 @@ class MuteExtensionCoreTest {
     assertTrue(firstRestored.get(), "first mute's restorer should be called on rollback");
   }
 
+  @Test
+  @DisplayName("If the rollback restorer throws, its exception is suppressed onto the original mute exception")
+  void rollbackRestorerThrowIsSuppressedOntoMuteException() throws Exception {
+    RuntimeException muteEx   = new RuntimeException("mute failed");
+    RuntimeException restoreEx = new RuntimeException("rollback restore failed");
+
+    // index 0: muting succeeds, but its restorer throws during rollback
+    LogMute throwingRestorerMute = classes -> () -> { throw restoreEx; };
+    // index 1: muting throws → triggers the catch/rollback block
+    LogMute failingMute = classes -> { throw muteEx; };
+
+    MuteExtension extension = new MuteExtension(List.of(throwingRestorerMute, failingMute));
+
+    Method method = MethodMuteFixture.class.getDeclaredMethod("run");
+    ExtensionContext context = contextFor(method, MethodMuteFixture.class);
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> extension.beforeTestExecution(context));
+
+    assertSame(muteEx, thrown, "original mute exception should propagate");
+    assertEquals(1, thrown.getSuppressed().length);
+    assertSame(restoreEx, thrown.getSuppressed()[0],
+      "rollback restore failure should be suppressed onto the primary exception");
+  }
+
+  @Test
+  @DisplayName("If a restorer throws during afterTestExecution, the exception propagates")
+  void compositeRestorerThrowPropagatesFromAfterTestExecution() throws Exception {
+    RuntimeException restoreEx = new RuntimeException("restore failed at end-of-test");
+
+    LogMute throwingMute = classes -> () -> { throw restoreEx; };
+    MuteExtension extension = new MuteExtension(List.of(throwingMute));
+
+    Method method = MethodMuteFixture.class.getDeclaredMethod("run");
+    ExtensionContext context = contextFor(method, MethodMuteFixture.class);
+
+    extension.beforeTestExecution(context);
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> extension.afterTestExecution(context));
+    assertSame(restoreEx, thrown);
+  }
+
+  @Test
+  @DisplayName("If multiple restorers throw during afterTestExecution, subsequent exceptions are suppressed onto the primary")
+  void compositeMultipleRestorerThrowsSuppressedOntoPrimary() throws Exception {
+    RuntimeException ex1 = new RuntimeException("restorer-0 failed");
+    RuntimeException ex2 = new RuntimeException("restorer-1 failed");
+
+    // reverse-order restore: index 1 runs first → ex2 is primaryEx; index 0 runs next → ex1 suppressed
+    LogMute failingMute1 = classes -> () -> { throw ex1; };
+    LogMute failingMute2 = classes -> () -> { throw ex2; };
+
+    MuteExtension extension = new MuteExtension(List.of(failingMute1, failingMute2));
+
+    Method method = MethodMuteFixture.class.getDeclaredMethod("run");
+    ExtensionContext context = contextFor(method, MethodMuteFixture.class);
+
+    extension.beforeTestExecution(context);
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> extension.afterTestExecution(context));
+
+    assertSame(ex2, thrown, "restorer-1 (processed first) should be the primary exception");
+    assertEquals(1, thrown.getSuppressed().length);
+    assertSame(ex1, thrown.getSuppressed()[0], "restorer-0 exception should be suppressed");
+  }
+
   // ---------- Fixture classes ----------
 
   static class NoMuteFixture {

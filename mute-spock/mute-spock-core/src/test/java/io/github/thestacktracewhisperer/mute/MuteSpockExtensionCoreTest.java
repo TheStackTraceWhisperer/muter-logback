@@ -130,6 +130,48 @@ class MuteSpockExtensionCoreTest {
     assertTrue(firstRestored.get(), "First mute's restorer should be called when second mute fails");
   }
 
+  @Test
+  @DisplayName("If a restorer throws in the finally block, all other restorers still run and the exception propagates")
+  void finallyRestorerThrowContinuesRemainingRestorersAndRethrows() {
+    AtomicBoolean secondRestored = new AtomicBoolean();
+    RuntimeException restoreEx = new RuntimeException("restore failed");
+
+    // index 0 → restored SECOND (reverse order); throws
+    LogMute throwingRestorer = classes -> () -> { throw restoreEx; };
+    // index 1 → restored FIRST (reverse order); succeeds
+    LogMute trackingRestorer = classes -> () -> secondRestored.set(true);
+
+    MuteInterceptor interceptor = new MuteInterceptor(
+      new Class<?>[0], List.of(throwingRestorer, trackingRestorer));
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> interceptor.intercept(proceedingInvocation()));
+
+    assertSame(restoreEx, thrown, "primary restore exception should be rethrown");
+    assertTrue(secondRestored.get(), "restorer at index 1 (processed first) should still run");
+  }
+
+  @Test
+  @DisplayName("If multiple restorers throw in the finally block, subsequent exceptions are suppressed onto the primary")
+  void finallyMultipleRestorerThrowsAreSuppressedOntoPrimary() {
+    RuntimeException ex1 = new RuntimeException("restorer-0 failed");
+    RuntimeException ex2 = new RuntimeException("restorer-1 failed");
+
+    // reverse-order restore: index 1 runs first → ex2 becomes primaryEx; index 0 runs second → ex1 suppressed
+    LogMute failingMute1 = classes -> () -> { throw ex1; };
+    LogMute failingMute2 = classes -> () -> { throw ex2; };
+
+    MuteInterceptor interceptor = new MuteInterceptor(
+      new Class<?>[0], List.of(failingMute1, failingMute2));
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> interceptor.intercept(proceedingInvocation()));
+
+    assertSame(ex2, thrown, "restorer-1 (processed first) should be the primary exception");
+    assertEquals(1, thrown.getSuppressed().length);
+    assertSame(ex1, thrown.getSuppressed()[0], "restorer-0 exception should be suppressed onto primary");
+  }
+
   // ---------- MuteSpockExtension tests ----------
 
   @Test

@@ -269,6 +269,31 @@ class MuteKotestListenerCoreTest {
   }
 
   @Test
+  @DisplayName("End-of-test restore: second restorer exception is suppressed onto the primary when multiple restorers throw")
+  void compositeRestorerSuppressesSecondaryException() {
+    RuntimeException firstEx = new RuntimeException("first-restore-failure");
+    RuntimeException secondEx = new RuntimeException("second-restore-failure");
+
+    // Restorers run in reverse insertion order: mute2 (index 1) first, then mute1 (index 0).
+    // mute2's restorer throws firstEx → becomes primary.
+    // mute1's restorer throws secondEx → primaryEx is already set, so secondEx is suppressed.
+    LogMute mute1 = classes -> () -> { throw secondEx; };
+    LogMute mute2 = classes -> () -> { throw firstEx; };
+
+    MuteKotestListener listener = new MuteKotestListener(List.of(mute1, mute2));
+    Object key = new Object();
+
+    listener.muteBefore(key, MutedSpec.class);
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> listener.restoreAfter(key));
+
+    assertSame(firstEx, thrown, "first restorer to fail (mute2 reversed to index 1) should be the primary exception");
+    assertArrayEquals(new Throwable[]{secondEx}, thrown.getSuppressed(),
+      "the second failing restorer's exception should be suppressed onto the primary");
+  }
+
+  @Test
   @DisplayName("restoreAfter removes the map entry before calling restore(), so a throwing restore does not leave stale state")
   void restoreAfterCleansUpMapEntryBeforeRestoring() {
     RuntimeException restoreFailure = new RuntimeException("restore-failure");

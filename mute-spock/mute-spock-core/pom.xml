@@ -79,16 +79,16 @@
                 <rule>
                   <element>BUNDLE</element>
                   <limits>
-                    <limit>
-                      <counter>LINE</counter>
-                      <value>COVEREDRATIO</value>
-                      <minimum>0.90</minimum>
-                    </limit>
-                    <limit>
-                      <counter>BRANCH</counter>
-                      <value>COVEREDRATIO</value>
-                      <minimum>0.90</minimum>
-                    </limit>
+                     <limit>
+                       <counter>LINE</counter>
+                       <value>COVEREDRATIO</value>
+                       <minimum>${jacoco.coverage.minimum}</minimum>
+                     </limit>
+                     <limit>
+                       <counter>BRANCH</counter>
+                       <value>COVEREDRATIO</value>
+                       <minimum>${jacoco.coverage.minimum}</minimum>
+                     </limit>
                   </limits>
                 </rule>
               </rules>

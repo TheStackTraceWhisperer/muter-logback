@@ -56,9 +56,16 @@ class MuteInterceptor implements IMethodInterceptor {
       }
       invocation.proceed();
     } finally {
+      RuntimeException primaryEx = null;
       for (int i = restorers.size() - 1; i >= 0; i--) {
-        restorers.get(i).restore();
+        try {
+          restorers.get(i).restore();
+        } catch (RuntimeException ex) {
+          if (primaryEx == null) primaryEx = ex;
+          else primaryEx.addSuppressed(ex);
+        }
       }
+      if (primaryEx != null) throw primaryEx;
     }
   }
 }

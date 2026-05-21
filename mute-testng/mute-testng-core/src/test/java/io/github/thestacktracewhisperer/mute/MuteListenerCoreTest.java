@@ -261,6 +261,49 @@ class MuteListenerCoreTest {
   }
 
   @Test
+  @DisplayName("End-of-test restore: if multiple restorers throw, subsequent exceptions are suppressed onto the primary")
+  void compositeRestorerMultipleThrowsSuppressedOntoPrimary() {
+    RuntimeException ex1 = new RuntimeException("restorer-0 failed");
+    RuntimeException ex2 = new RuntimeException("restorer-1 failed");
+
+    // reverse-order restore: index 1 runs first → ex2 becomes primaryEx; index 0 runs next → ex1 suppressed
+    LogMute failingMute1 = classes -> () -> { throw ex1; };
+    LogMute failingMute2 = classes -> () -> { throw ex2; };
+
+    MuteListener listener = new MuteListener(List.of(failingMute1, failingMute2));
+    IInvokedMethod invocation = invokedMethod(true, MethodMuteFixture.class, "run");
+    ITestResult result = testResult();
+
+    listener.beforeInvocation(invocation, result);
+
+    RuntimeException thrown = assertThrows(RuntimeException.class,
+      () -> listener.afterInvocation(invocation, result));
+
+    assertSame(ex2, thrown, "restorer-1 (processed first in reverse) should be the primary exception");
+    assertEquals(1, thrown.getSuppressed().length);
+    assertSame(ex1, thrown.getSuppressed()[0], "restorer-0 exception should be suppressed onto primary");
+  }
+
+  @Test
+  @DisplayName("Constructor-style invocation (getMethod() == null): class-level @Mute still applies")
+  void constructorInvocationFallsBackToClassLevelAnnotation() throws Exception {
+    AtomicBoolean muteCalled = new AtomicBoolean();
+    LogMute mockMute = classes -> {
+      muteCalled.set(true);
+      return () -> {};
+    };
+    MuteListener listener = new MuteListener(List.of(mockMute));
+
+    // ConstructorOrMethod built from a constructor → getMethod() returns null
+    IInvokedMethod invocation = invokedMethodFromConstructor(true, ClassLevelMuteFixture.class);
+    ITestResult result = testResult();
+
+    listener.beforeInvocation(invocation, result);
+    assertTrue(muteCalled.get(),
+      "class-level @Mute must be found even when getMethod() returns null (constructor invocation)");
+  }
+
+  @Test
   @DisplayName("Public no-arg constructor can be instantiated without error")
   void publicConstructorInstantiates() {
     assertDoesNotThrow((org.junit.jupiter.api.function.Executable) MuteListener::new);
@@ -357,6 +400,37 @@ class MuteListenerCoreTest {
       (proxy, m, args) -> switch (m.getName()) {
         case "isTestMethod" -> isTestMethod;
         case "isConfigurationMethod" -> isConfigurationMethod;
+        case "getTestMethod" -> testNGMethod;
+        case "toString" -> "IInvokedMethodProxy";
+        case "hashCode" -> System.identityHashCode(proxy);
+        case "equals" -> proxy == args[0];
+        default -> null;
+      });
+  }
+
+  private static IInvokedMethod invokedMethodFromConstructor(boolean isTestMethod,
+                                                             Class<?> testClass) throws Exception {
+    java.lang.reflect.Constructor<?> ctor = testClass.getDeclaredConstructor();
+    ConstructorOrMethod com = new ConstructorOrMethod(ctor);
+
+    ITestNGMethod testNGMethod = (ITestNGMethod) Proxy.newProxyInstance(
+      ITestNGMethod.class.getClassLoader(),
+      new Class<?>[]{ITestNGMethod.class},
+      (proxy, m, args) -> switch (m.getName()) {
+        case "getConstructorOrMethod" -> com;
+        case "getTestClass" -> testNGClassFor(testClass);
+        case "toString" -> "ITestNGMethodProxy";
+        case "hashCode" -> System.identityHashCode(proxy);
+        case "equals" -> proxy == args[0];
+        default -> null;
+      });
+
+    return (IInvokedMethod) Proxy.newProxyInstance(
+      IInvokedMethod.class.getClassLoader(),
+      new Class<?>[]{IInvokedMethod.class},
+      (proxy, m, args) -> switch (m.getName()) {
+        case "isTestMethod" -> isTestMethod;
+        case "isConfigurationMethod" -> false;
         case "getTestMethod" -> testNGMethod;
         case "toString" -> "IInvokedMethodProxy";
         case "hashCode" -> System.identityHashCode(proxy);
